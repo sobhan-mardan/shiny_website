@@ -1,1 +1,1 @@
-This is a example of shiny webiste. 
+This is a example of shiny website. 
