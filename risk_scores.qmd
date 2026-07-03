@@ -1,0 +1,646 @@
+---
+title: "AF Risk Scores"
+format:
+  html:
+    embed-resources: false
+    grid:
+      body-width: 1900px
+      sidebar-width: 150px
+      margin-width: 150px
+    resources:
+      - shinylive-sw.js
+filters:
+  - shinylive
+---
+
+```{shinylive-r}
+#| standalone: true
+#| viewerHeight: 1100
+
+library(shiny)
+library(bslib)
+
+## Example annual stroke-risk lookup table.
+## Replace these values with the exact cohort/source you want to use.
+stroke_risk_lookup <- data.frame(
+  score = 0:9,
+  annual_risk = c(0.2, 0.6, 2.2, 3.2, 4.8, 7.2, 9.7, 11.2, 10.8, 12.2)
+)
+
+ui <- fluidPage(
+
+  tags$style(HTML("
+    body {
+      font-size: 16px;
+    }
+
+    .title-box {
+      margin-bottom: 25px;
+    }
+
+    .note-box {
+      border-left: 5px solid #666;
+      background-color: #f8f9fa;
+      padding: 15px;
+      margin-bottom: 20px;
+    }
+
+    .interpretation-box {
+      border-left: 5px solid #0d6efd;
+      background-color: #f4f8ff;
+      padding: 15px;
+      margin-top: 10px;
+      margin-bottom: 20px;
+      white-space: pre-wrap;
+    }
+
+    .warning-box {
+      border-left: 5px solid #9b2226;
+      background-color: #fff5f5;
+      padding: 15px;
+      margin-top: 10px;
+      margin-bottom: 20px;
+      white-space: pre-wrap;
+    }
+
+    .value-box {
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      padding: 18px;
+      margin-bottom: 18px;
+      background-color: #f8f9fa;
+      min-height: 125px;
+    }
+
+    .value-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #555;
+    }
+
+    .value-number {
+      font-size: 32px;
+      font-weight: 700;
+      margin-top: 8px;
+    }
+
+    .section-label {
+      margin-top: 18px;
+      margin-bottom: 8px;
+      font-weight: 700;
+      color: #333;
+    }
+
+    .small-note {
+      font-size: 13px;
+      color: #666;
+      margin-top: 12px;
+    }
+  ")),
+
+  div(
+    class = "title-box",
+    h1("AF Stroke and Bleeding Risk Calculator"),
+    p("Combined CHA₂DS₂-VASc and HAS-BLED calculator for patients with atrial fibrillation.")
+  ),
+
+  div(
+    class = "note-box",
+    strong("Clinical note: "),
+    "CHA₂DS₂-VASc estimates thromboembolic risk, whereas HAS-BLED identifies bleeding-risk factors."
+  ),
+
+  sidebarLayout(
+
+    sidebarPanel(
+      width = 3,
+
+      div(class = "section-label", "Shared patient profile"),
+
+      sliderInput(
+        inputId = "age",
+        label = "Age",
+        value = 75,
+        min = 18,
+        max = 110,
+        step = 1
+      ),
+
+      radioButtons(
+        inputId = "sex",
+        label = "Sex",
+        choices = c("Male", "Female"),
+        selected = "Male",
+        inline = TRUE
+      ),
+
+      checkboxInput("stroke_tia", "Prior stroke, TIA, or thromboembolism", FALSE),
+
+      div(class = "section-label", "CHA₂DS₂-VASc factors"),
+
+      checkboxInput("chf", "Congestive heart failure / LV dysfunction", FALSE),
+      checkboxInput("htn_history", "Hypertension history", FALSE),
+      checkboxInput("diabetes", "Diabetes mellitus", FALSE),
+      checkboxInput("vascular", "Vascular disease: prior MI, PAD, or aortic plaque", FALSE),
+
+      div(class = "section-label", "HAS-BLED factors"),
+
+      sliderInput(
+        inputId = "sbp",
+        label = "Systolic blood pressure, mmHg",
+        value = 150,
+        min = 80,
+        max = 260,
+        step = 1
+      ),
+
+      checkboxInput(
+        inputId = "renal",
+        label = "Abnormal renal function: dialysis, transplant, or creatinine >200 µmol/L",
+        value = FALSE
+      ),
+
+      checkboxInput(
+        inputId = "liver",
+        label = "Abnormal liver function: cirrhosis or significant biochemical liver abnormality",
+        value = FALSE
+      ),
+
+      checkboxInput("bleeding", "Prior major bleeding or bleeding predisposition", FALSE),
+
+      checkboxInput(
+        inputId = "vka",
+        label = "Patient is receiving warfarin/VKA therapy",
+        value = FALSE
+      ),
+
+      conditionalPanel(
+        condition = "input.vka == true",
+        checkboxInput("labile_inr", "Labile INR: unstable/high INR or TTR <60%", FALSE)
+      ),
+
+      checkboxInput(
+        inputId = "drugs",
+        label = "Concomitant antiplatelet therapy or NSAID use",
+        value = FALSE
+      ),
+
+      checkboxInput(
+        inputId = "alcohol",
+        label = "Excess alcohol use: approximately ≥8 drinks/week",
+        value = FALSE
+      ),
+
+      div(
+        class = "small-note",
+        "Score ranges: CHA₂DS₂-VASc 0–9; HAS-BLED 0–9. Annual stroke-risk percentages are example values and should be replaced with your preferred source."
+      )
+    ),
+
+    mainPanel(
+      width = 9,
+
+      fluidRow(
+        column(
+          width = 3,
+          div(
+            class = "value-box",
+            div(class = "value-title", "CHA₂DS₂-VASc score"),
+            div(class = "value-number", textOutput("cha_score_text"))
+          )
+        ),
+
+        column(
+          width = 3,
+          div(
+            class = "value-box",
+            div(class = "value-title", "Stroke-risk category"),
+            div(class = "value-number", textOutput("cha_category_text"))
+          )
+        ),
+
+        column(
+          width = 3,
+          div(
+            class = "value-box",
+            div(class = "value-title", "HAS-BLED score"),
+            div(class = "value-number", textOutput("hasbled_score_text"))
+          )
+        ),
+
+        column(
+          width = 3,
+          div(
+            class = "value-box",
+            div(class = "value-title", "Bleeding-risk flag"),
+            div(class = "value-number", textOutput("hasbled_flag_text"))
+          )
+        )
+      ),
+
+      h3("Combined interpretation"),
+      div(class = "interpretation-box", textOutput("combined_interpretation_text")),
+
+      tabsetPanel(
+        type = "tabs",
+
+        tabPanel(
+          title = "Summary",
+          br(),
+          h3("Score summary"),
+          tableOutput("summary_table"),
+          br(),
+          h3("What to review"),
+          div(class = "warning-box", textOutput("review_text"))
+        ),
+
+        tabPanel(
+          title = "CHA₂DS₂-VASc details",
+          br(),
+          h3("Score components"),
+          tableOutput("cha_component_table"),
+          br(),
+          h3("Example annual stroke risk by score"),
+          plotOutput("cha_risk_plot", height = "420px")
+        ),
+
+        tabPanel(
+          title = "HAS-BLED details",
+          br(),
+          h3("Score components"),
+          tableOutput("hasbled_component_table"),
+          br(),
+          h3("Modifiable bleeding-risk factors"),
+          tableOutput("modifiable_table"),
+          br(),
+          h3("HAS-BLED point contribution"),
+          plotOutput("hasbled_component_plot", height = "420px")
+        )
+      )
+    )
+  )
+)
+
+server <- function(input, output, session) {
+
+  cha_data <- reactive({
+
+    age_points <- if (input$age >= 75) {
+      2
+    } else if (input$age >= 65) {
+      1
+    } else {
+      0
+    }
+
+    sex_points <- ifelse(input$sex == "Female", 1, 0)
+    chf_points <- ifelse(input$chf, 1, 0)
+    htn_points <- ifelse(input$htn_history, 1, 0)
+    diabetes_points <- ifelse(input$diabetes, 1, 0)
+    stroke_points <- ifelse(input$stroke_tia, 2, 0)
+    vascular_points <- ifelse(input$vascular, 1, 0)
+
+    total_score <-
+      chf_points +
+      htn_points +
+      age_points +
+      diabetes_points +
+      stroke_points +
+      vascular_points +
+      sex_points
+
+    total_score <- min(total_score, 9)
+
+    annual_risk <- stroke_risk_lookup$annual_risk[
+      stroke_risk_lookup$score == total_score
+    ]
+
+    category <- if (input$sex == "Male" && total_score == 0) {
+      "Low"
+    } else if (input$sex == "Female" && total_score == 1) {
+      "Low"
+    } else if (input$sex == "Male" && total_score == 1) {
+      "Intermediate"
+    } else if (input$sex == "Female" && total_score == 2) {
+      "Intermediate"
+    } else {
+      "High"
+    }
+
+    interpretation <- if (category == "Low") {
+      "Low estimated thromboembolic risk. Anticoagulation is usually not recommended solely based on CHA₂DS₂-VASc."
+    } else if (category == "Intermediate") {
+      "Intermediate estimated thromboembolic risk. Anticoagulation may be considered using shared decision-making and additional risk modifiers."
+    } else {
+      "High estimated thromboembolic risk. Oral anticoagulation is generally recommended unless contraindicated."
+    }
+
+    list(
+      total_score = total_score,
+      annual_risk = annual_risk,
+      category = category,
+      interpretation = interpretation,
+      age_points = age_points,
+      sex_points = sex_points,
+      chf_points = chf_points,
+      htn_points = htn_points,
+      diabetes_points = diabetes_points,
+      stroke_points = stroke_points,
+      vascular_points = vascular_points
+    )
+  })
+
+  hasbled_data <- reactive({
+
+    hypertension_points <- ifelse(input$sbp > 160, 1, 0)
+    renal_points <- ifelse(input$renal, 1, 0)
+    liver_points <- ifelse(input$liver, 1, 0)
+    stroke_points <- ifelse(input$stroke_tia, 1, 0)
+    bleeding_points <- ifelse(input$bleeding, 1, 0)
+    labile_inr_points <- ifelse(isTRUE(input$vka) && isTRUE(input$labile_inr), 1, 0)
+    elderly_points <- ifelse(input$age > 65, 1, 0)
+    drugs_points <- ifelse(input$drugs, 1, 0)
+    alcohol_points <- ifelse(input$alcohol, 1, 0)
+
+    total_score <-
+      hypertension_points +
+      renal_points +
+      liver_points +
+      stroke_points +
+      bleeding_points +
+      labile_inr_points +
+      elderly_points +
+      drugs_points +
+      alcohol_points
+
+    risk_flag <- ifelse(total_score >= 3, "Elevated", "Not elevated")
+
+    interpretation <- if (total_score >= 3) {
+      paste(
+        "HAS-BLED score is 3 or higher, indicating elevated bleeding risk.",
+        "This should trigger closer follow-up and review of modifiable bleeding-risk factors.",
+        "The score should not be used as the only reason to withhold oral anticoagulation."
+      )
+    } else {
+      paste(
+        "HAS-BLED score is below 3.",
+        "Bleeding risk is not flagged as elevated by this score, but clinical judgment is still required.",
+        "Review modifiable risk factors and reassess if clinical status changes."
+      )
+    }
+
+    modifiable_items <- data.frame(
+      Factor = c(
+        "Uncontrolled hypertension",
+        "Abnormal renal function",
+        "Abnormal liver function",
+        "Labile INR if receiving VKA",
+        "Concomitant antiplatelet therapy or NSAID use",
+        "Excess alcohol use"
+      ),
+      Present = c(
+        hypertension_points == 1,
+        renal_points == 1,
+        liver_points == 1,
+        labile_inr_points == 1,
+        drugs_points == 1,
+        alcohol_points == 1
+      ),
+      Suggested_review = c(
+        "Optimize blood pressure control.",
+        "Review renal function, dose appropriateness, and reversible contributors.",
+        "Review liver disease severity and reversible contributors.",
+        "Improve INR monitoring, adherence, interacting drugs, diet consistency, or consider DOAC suitability when appropriate.",
+        "Review need for antiplatelet/NSAID therapy and deprescribe where clinically appropriate.",
+        "Counsel on alcohol reduction and reassess bleeding risk."
+      )
+    )
+
+    list(
+      total_score = total_score,
+      risk_flag = risk_flag,
+      interpretation = interpretation,
+      hypertension_points = hypertension_points,
+      renal_points = renal_points,
+      liver_points = liver_points,
+      stroke_points = stroke_points,
+      bleeding_points = bleeding_points,
+      labile_inr_points = labile_inr_points,
+      elderly_points = elderly_points,
+      drugs_points = drugs_points,
+      alcohol_points = alcohol_points,
+      modifiable_items = modifiable_items
+    )
+  })
+
+  output$cha_score_text <- renderText({
+    cha_data()$total_score
+  })
+
+  output$cha_category_text <- renderText({
+    cha_data()$category
+  })
+
+  output$hasbled_score_text <- renderText({
+    hasbled_data()$total_score
+  })
+
+  output$hasbled_flag_text <- renderText({
+    hasbled_data()$risk_flag
+  })
+
+  output$combined_interpretation_text <- renderText({
+    paste(
+      paste0("CHA₂DS₂-VASc: ", cha_data()$total_score, " (", cha_data()$category, " stroke-risk category)."),
+      cha_data()$interpretation,
+      "",
+      paste0("HAS-BLED: ", hasbled_data()$total_score, " (", hasbled_data()$risk_flag, " bleeding-risk flag)."),
+      hasbled_data()$interpretation,
+      sep = "\n"
+    )
+  })
+
+  output$review_text <- renderText({
+    modifiable <- hasbled_data()$modifiable_items
+    present_factors <- modifiable$Factor[modifiable$Present]
+
+    if (length(present_factors) == 0) {
+      "No modifiable HAS-BLED factors are currently selected. Continue routine clinical review, medication reconciliation, renal/liver function monitoring when relevant, and reassessment over time."
+    } else {
+      paste(
+        "Selected modifiable bleeding-risk factors:",
+        paste0("- ", present_factors, collapse = "\n"),
+        sep = "\n"
+      )
+    }
+  })
+
+  output$summary_table <- renderTable({
+    data.frame(
+      Score = c("CHA₂DS₂-VASc", "HAS-BLED"),
+      Purpose = c("Stroke/systemic embolism risk stratification", "Bleeding-risk factor identification"),
+      Total = c(cha_data()$total_score, hasbled_data()$total_score),
+      Interpretation = c(
+        cha_data()$category,
+        hasbled_data()$risk_flag
+      ),
+      Important_note = c(
+        "Female sex is included as a point in the score but should be interpreted in clinical context.",
+        "A high score should trigger risk-factor modification, not automatic OAC withholding."
+      )
+    )
+  })
+
+  output$cha_component_table <- renderTable({
+
+    cd <- cha_data()
+
+    data.frame(
+      Component = c(
+        "Congestive heart failure / LV dysfunction",
+        "Hypertension",
+        "Age",
+        "Diabetes mellitus",
+        "Prior stroke/TIA/thromboembolism",
+        "Vascular disease",
+        "Sex category"
+      ),
+      Value = c(
+        ifelse(input$chf, "Yes", "No"),
+        ifelse(input$htn_history, "Yes", "No"),
+        paste0(input$age, " years"),
+        ifelse(input$diabetes, "Yes", "No"),
+        ifelse(input$stroke_tia, "Yes", "No"),
+        ifelse(input$vascular, "Yes", "No"),
+        input$sex
+      ),
+      Points = c(
+        cd$chf_points,
+        cd$htn_points,
+        cd$age_points,
+        cd$diabetes_points,
+        cd$stroke_points,
+        cd$vascular_points,
+        cd$sex_points
+      )
+    )
+  })
+
+  output$hasbled_component_table <- renderTable({
+
+    hd <- hasbled_data()
+
+    data.frame(
+      Component = c(
+        "Hypertension",
+        "Abnormal renal function",
+        "Abnormal liver function",
+        "Prior stroke",
+        "Bleeding history or predisposition",
+        "Labile INR",
+        "Elderly",
+        "Drugs predisposing to bleeding",
+        "Alcohol use"
+      ),
+      Definition = c(
+        "Systolic blood pressure >160 mmHg",
+        "Dialysis, transplant, or creatinine >200 µmol/L",
+        "Cirrhosis or significant biochemical liver abnormality",
+        "History of stroke",
+        "Prior major bleeding or bleeding predisposition",
+        "Unstable/high INR or time in therapeutic range <60%; only counted for VKA therapy",
+        "Age >65 years",
+        "Concomitant antiplatelet therapy or NSAID use",
+        "Excess alcohol use, approximately ≥8 drinks/week"
+      ),
+      Value = c(
+        paste0(input$sbp, " mmHg"),
+        ifelse(input$renal, "Yes", "No"),
+        ifelse(input$liver, "Yes", "No"),
+        ifelse(input$stroke_tia, "Yes", "No"),
+        ifelse(input$bleeding, "Yes", "No"),
+        ifelse(input$vka, ifelse(isTRUE(input$labile_inr), "Yes", "No"), "Not applicable"),
+        paste0(input$age, " years"),
+        ifelse(input$drugs, "Yes", "No"),
+        ifelse(input$alcohol, "Yes", "No")
+      ),
+      Points = c(
+        hd$hypertension_points,
+        hd$renal_points,
+        hd$liver_points,
+        hd$stroke_points,
+        hd$bleeding_points,
+        hd$labile_inr_points,
+        hd$elderly_points,
+        hd$drugs_points,
+        hd$alcohol_points
+      )
+    )
+  })
+
+  output$modifiable_table <- renderTable({
+    modifiable <- hasbled_data()$modifiable_items
+    modifiable$Present <- ifelse(modifiable$Present, "Yes", "No")
+    modifiable
+  })
+
+  output$cha_risk_plot <- renderPlot({
+
+    current_score <- cha_data()$total_score
+
+    bar_heights <- stroke_risk_lookup$annual_risk
+    names(bar_heights) <- stroke_risk_lookup$score
+
+    bar_positions <- barplot(
+      height = bar_heights,
+      names.arg = stroke_risk_lookup$score,
+      xlab = "CHA₂DS₂-VASc score",
+      ylab = "Estimated annual stroke risk (%)",
+      main = "Example annual stroke risk by CHA₂DS₂-VASc score",
+      ylim = c(0, max(bar_heights) + 2)
+    )
+
+    points(
+      x = bar_positions[current_score + 1],
+      y = stroke_risk_lookup$annual_risk[stroke_risk_lookup$score == current_score],
+      pch = 19,
+      cex = 2
+    )
+
+    text(
+      x = bar_positions[current_score + 1],
+      y = stroke_risk_lookup$annual_risk[stroke_risk_lookup$score == current_score] + 0.8,
+      labels = "Selected",
+      cex = 0.9
+    )
+  })
+
+  output$hasbled_component_plot <- renderPlot({
+
+    hd <- hasbled_data()
+
+    component_points <- c(
+      "Hypertension" = hd$hypertension_points,
+      "Renal" = hd$renal_points,
+      "Liver" = hd$liver_points,
+      "Stroke" = hd$stroke_points,
+      "Bleeding" = hd$bleeding_points,
+      "Labile INR" = hd$labile_inr_points,
+      "Elderly" = hd$elderly_points,
+      "Drugs" = hd$drugs_points,
+      "Alcohol" = hd$alcohol_points
+    )
+
+    barplot(
+      height = component_points,
+      horiz = TRUE,
+      xlim = c(0, 1.2),
+      xlab = "Points",
+      main = "HAS-BLED component contribution",
+      las = 1
+    )
+  })
+}
+
+shinyApp(ui = ui, server = server)
+```

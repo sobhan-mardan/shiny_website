@@ -1,0 +1,26 @@
+project:
+  type: website
+  output-dir: docs
+
+website:
+  title: "Shiny Website"
+  navbar:
+    left:
+      - href: index.qmd
+        text: About
+      - href: sparc.qmd
+        text: SPARCtool
+      - href: risk_scores.qmd
+        text: Bleed/Stroke Risk
+      
+
+format:
+  html:
+    theme:
+      light: flatly
+      dark: superhero
+    css: styles.css
+    toc: true
+
+editor: visual
+
